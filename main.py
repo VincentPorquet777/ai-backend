@@ -119,14 +119,16 @@ async def test_openai():
             if client is None:
                 yield f"data: {json.dumps({'error': 'OpenAI client not initialized. Check OPENAI_API_KEY.'})}\n\n"
                 return
-            response = client.responses.create(
+            response = client.chat.completions.create(
                 model=DEFAULT_MODEL,
-                input=[{"role": "user", "content": "Count to 3"}],
+                messages=[{"role": "user", "content": "Count to 3"}],
                 stream=True
             )
             for chunk in response:
-                if hasattr(chunk, 'output_text_delta') and chunk.output_text_delta:
-                    yield f"data: {json.dumps({'text': chunk.output_text_delta})}\n\n"
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        yield f"data: {json.dumps({'text': delta.content})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -166,27 +168,22 @@ def chat(req: ChatRequest):
 
     model = req.model or DEFAULT_MODEL
 
-    # Build input items for the Responses API (roles supported) :contentReference[oaicite:3]{index=3}
-    input_items = []
-
-    # Optional: a base developer instruction
+    # Build messages for Chat Completions API
+    messages = []
     if req.instructions:
-        input_items.append({"role": "developer", "content": req.instructions})
-
-    # Add prior messages (client-side memory for now)
+        messages.append({"role": "system", "content": req.instructions})
     for m in req.history:
-        input_items.append({"role": m.role, "content": m.content})
-
-    # Add the new user message
-    input_items.append({"role": "user", "content": req.message})
+        # Map 'developer' role to 'system' for Chat API
+        role = "system" if m.role == "developer" else m.role
+        messages.append({"role": role, "content": m.content})
+    messages.append({"role": "user", "content": req.message})
 
     try:
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=model,
-            input=input_items,
-            tools=[{"type": "web_search_preview"}],  # Enable web search
+            messages=messages,
         )
-        reply = response.output_text or ""
+        reply = response.choices[0].message.content or ""
         return ChatResponse(
             reply=reply,
             model=model,
@@ -210,55 +207,35 @@ async def chat_stream(req: ChatRequest):
 
     model = req.model or DEFAULT_MODEL
 
-    # Build input items
-    input_items = []
+    # Build messages for Chat Completions API
+    messages = []
     if req.instructions:
-        input_items.append({"role": "developer", "content": req.instructions})
+        messages.append({"role": "system", "content": req.instructions})
     for m in req.history:
-        input_items.append({"role": m.role, "content": m.content})
-    input_items.append({"role": "user", "content": req.message})
+        # Map 'developer' role to 'system' for Chat API
+        role = "system" if m.role == "developer" else m.role
+        messages.append({"role": role, "content": m.content})
+    messages.append({"role": "user", "content": req.message})
 
     async def generate():
         try:
-            print(f"[STREAM] Starting stream for model: {model}")
-            response = client.responses.create(
+            print(f"[STREAM] Starting Chat Completions stream for model: {model}")
+            response = client.chat.completions.create(
                 model=model,
-                input=input_items,
+                messages=messages,
                 stream=True,
-                tools=[{"type": "web_search_preview"}],  # Enable web search
             )
 
             chunk_count = 0
             for chunk in response:
                 chunk_count += 1
-                print(f"[STREAM] Chunk {chunk_count}: {chunk}")
-                print(f"[STREAM] Chunk type: {type(chunk)}")
-                print(f"[STREAM] Chunk dir: {dir(chunk)}")
 
-                # Try multiple possible attribute names
-                text_delta = None
-                if hasattr(chunk, 'output_text_delta'):
-                    text_delta = chunk.output_text_delta
-                    print(f"[STREAM] Found output_text_delta: {text_delta}")
-                elif hasattr(chunk, 'delta'):
-                    if hasattr(chunk.delta, 'content'):
-                        text_delta = chunk.delta.content
-                        print(f"[STREAM] Found delta.content: {text_delta}")
-                    elif hasattr(chunk.delta, 'text'):
-                        text_delta = chunk.delta.text
-                        print(f"[STREAM] Found delta.text: {text_delta}")
-                elif hasattr(chunk, 'content'):
-                    text_delta = chunk.content
-                    print(f"[STREAM] Found content: {text_delta}")
-                elif hasattr(chunk, 'text'):
-                    text_delta = chunk.text
-                    print(f"[STREAM] Found text: {text_delta}")
-
-                if text_delta:
-                    print(f"[STREAM] Yielding text: {text_delta}")
-                    yield f"data: {json.dumps({'text': text_delta})}\n\n"
-                else:
-                    print(f"[STREAM] No text found in chunk")
+                # Chat Completions streaming uses choices[0].delta.content
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        print(f"[STREAM] Chunk {chunk_count}: {delta.content}")
+                        yield f"data: {json.dumps({'text': delta.content})}\n\n"
 
             print(f"[STREAM] Stream complete. Total chunks: {chunk_count}")
             yield f"data: {json.dumps({'done': True})}\n\n"
