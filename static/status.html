@@ -263,18 +263,159 @@
         select {
             cursor: pointer;
         }
+
+        /* Tab Navigation */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .tab-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.75rem 1.5rem;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #cbd5e1;
+        }
+
+        .tab-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Product Mode Styles */
+        .product-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .product-chat-area {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            height: calc(100vh - 250px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .product-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 1.5rem;
+            padding-right: 0.5rem;
+        }
+
+        .product-message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .product-message.user {
+            background: rgba(59, 130, 246, 0.2);
+            margin-left: 15%;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .product-message.assistant {
+            background: rgba(34, 197, 94, 0.2);
+            margin-right: 15%;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .product-input-area {
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+        }
+
+        .product-input-area textarea {
+            flex: 1;
+        }
+
+        .voice-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            padding: 0;
+            flex-shrink: 0;
+        }
+
+        .voice-btn.recording {
+            background: #ef4444;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .speaking {
+            border: 2px solid #22c55e;
+            animation: speak-pulse 0.8s ease-in-out infinite;
+        }
+
+        @keyframes speak-pulse {
+            0%, 100% { border-color: #22c55e; }
+            50% { border-color: #4ade80; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Backend Status Dashboard</h1>
+            <h1>Backend Control Center</h1>
             <div class="header-info">
                 <span id="service-name">Service: Loading...</span>
                 <span id="revision">Revision: Loading...</span>
                 <span id="timestamp">Time: Loading...</span>
             </div>
         </div>
+
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('product')">Product Mode</button>
+            <button class="tab-btn" onclick="switchTab('diagnostics')">Diagnostics</button>
+        </div>
+
+        <!-- Product Mode Tab -->
+        <div id="product-tab" class="tab-content active">
+            <div class="product-container">
+                <div class="product-chat-area">
+                    <div class="product-messages" id="product-messages"></div>
+                    <div class="product-input-area">
+                        <textarea id="product-input" placeholder="Type or speak your message..." rows="2"></textarea>
+                        <button class="voice-btn" id="product-voice-btn" onclick="toggleProductVoice()" title="Hold to speak">🎤</button>
+                        <button id="product-send-btn" onclick="sendProductMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnostics Tab -->
+        <div id="diagnostics-tab" class="tab-content">
 
         <!-- Basic Health -->
         <div class="card">
@@ -391,6 +532,8 @@
                 </div>
             </div>
         </div>
+
+        </div> <!-- End diagnostics-tab -->
     </div>
 
     <script>
@@ -399,6 +542,14 @@
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
+
+        // Product Mode state
+        let productChatHistory = [];
+        let productRecorder = null;
+        let productAudioChunks = [];
+        let isProductRecording = false;
+        let speechSynthesis = window.speechSynthesis;
+        let currentUtterance = null;
 
         // Run basic health checks on load
         window.onload = function() {
@@ -853,6 +1004,234 @@
                 sendBtn.disabled = true; // Keep disabled until next recording
             }
         }
+
+        // Tab switching
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+
+        // Product Mode: Add message to chat
+        function addProductMessage(role, text) {
+            const messagesDiv = document.getElementById('product-messages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `product-message ${role}`;
+            msgDiv.textContent = text;
+            messagesDiv.appendChild(msgDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            return msgDiv;
+        }
+
+        // Product Mode: Stop speaking
+        function stopSpeaking() {
+            if (speechSynthesis.speaking) {
+                speechSynthesis.cancel();
+            }
+            document.querySelectorAll('.speaking').forEach(el => {
+                el.classList.remove('speaking');
+            });
+        }
+
+        // Product Mode: Speak text aloud
+        function speakText(text, messageElement) {
+            stopSpeaking(); // Stop any previous speech
+
+            if (!text) return;
+
+            currentUtterance = new SpeechSynthesisUtterance(text);
+            currentUtterance.rate = 1.1;
+            currentUtterance.pitch = 1.0;
+
+            // Add speaking indicator
+            if (messageElement) {
+                messageElement.classList.add('speaking');
+            }
+
+            currentUtterance.onend = () => {
+                if (messageElement) {
+                    messageElement.classList.remove('speaking');
+                }
+            };
+
+            currentUtterance.onerror = () => {
+                if (messageElement) {
+                    messageElement.classList.remove('speaking');
+                }
+            };
+
+            speechSynthesis.speak(currentUtterance);
+        }
+
+        // Product Mode: Send message (text or voice)
+        async function sendProductMessage(isVoiceMessage = false, transcript = null) {
+            const input = document.getElementById('product-input');
+            const sendBtn = document.getElementById('product-send-btn');
+            const voiceBtn = document.getElementById('product-voice-btn');
+
+            const message = transcript || input.value.trim();
+            if (!message) return;
+
+            // Stop any ongoing speech
+            stopSpeaking();
+
+            sendBtn.disabled = true;
+            voiceBtn.disabled = true;
+            input.disabled = true;
+
+            // Add user message
+            addProductMessage('user', message);
+            if (!isVoiceMessage) {
+                input.value = '';
+            }
+            productChatHistory.push({ role: 'user', content: message });
+
+            // Add assistant message placeholder
+            const assistantMsg = addProductMessage('assistant', '...');
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        history: productChatHistory.slice(-20),
+                        model: null,
+                        instructions: null
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Chat request failed');
+                }
+
+                const data = await response.json();
+                const reply = data.reply || '';
+
+                assistantMsg.textContent = reply;
+                productChatHistory.push({ role: 'assistant', content: reply });
+
+                // Speak the response aloud
+                speakText(reply, assistantMsg);
+
+            } catch (error) {
+                assistantMsg.textContent = `Error: ${error.message}`;
+            } finally {
+                sendBtn.disabled = false;
+                voiceBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
+        // Product Mode: Toggle voice recording
+        async function toggleProductVoice() {
+            const voiceBtn = document.getElementById('product-voice-btn');
+            const sendBtn = document.getElementById('product-send-btn');
+
+            if (!isProductRecording) {
+                // Start recording
+                try {
+                    // Stop any ongoing speech first
+                    stopSpeaking();
+
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    productRecorder = new MediaRecorder(stream);
+                    productAudioChunks = [];
+
+                    productRecorder.ondataavailable = (event) => {
+                        productAudioChunks.push(event.data);
+                    };
+
+                    productRecorder.onstop = async () => {
+                        stream.getTracks().forEach(track => track.stop());
+
+                        // Automatically send the recording
+                        if (productAudioChunks.length > 0) {
+                            await processProductVoice();
+                        }
+                    };
+
+                    productRecorder.start();
+                    isProductRecording = true;
+                    voiceBtn.classList.add('recording');
+                    voiceBtn.textContent = '⏹️';
+                    sendBtn.disabled = true;
+                } catch (error) {
+                    alert(`Microphone error: ${error.message}`);
+                }
+            } else {
+                // Stop recording
+                productRecorder.stop();
+                isProductRecording = false;
+                voiceBtn.classList.remove('recording');
+                voiceBtn.textContent = '🎤';
+            }
+        }
+
+        // Product Mode: Process voice recording
+        async function processProductVoice() {
+            const voiceBtn = document.getElementById('product-voice-btn');
+            const sendBtn = document.getElementById('product-send-btn');
+
+            try {
+                voiceBtn.disabled = true;
+                sendBtn.disabled = true;
+
+                // Create audio blob
+                const audioBlob = new Blob(productAudioChunks, { type: 'audio/webm' });
+
+                // Transcribe
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.webm');
+
+                const whisperResponse = await fetch('/test/whisper', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!whisperResponse.ok) {
+                    const error = await whisperResponse.json();
+                    throw new Error(error.detail || 'Transcription failed');
+                }
+
+                const whisperData = await whisperResponse.json();
+                const transcript = whisperData.transcript;
+
+                // Send as chat message
+                await sendProductMessage(true, transcript);
+
+            } catch (error) {
+                addProductMessage('assistant', `Voice error: ${error.message}`);
+            } finally {
+                voiceBtn.disabled = false;
+                sendBtn.disabled = false;
+                productAudioChunks = [];
+            }
+        }
+
+        // Product Mode: Enter key to send
+        document.addEventListener('DOMContentLoaded', function() {
+            const productInput = document.getElementById('product-input');
+            productInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendProductMessage();
+                }
+            });
+
+            // Allow interrupting speech by clicking anywhere
+            document.getElementById('product-messages').addEventListener('click', stopSpeaking);
+        });
     </script>
 </body>
 </html>
