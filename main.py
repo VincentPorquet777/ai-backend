@@ -55,12 +55,8 @@ class ChatResponse(BaseModel):
 # ---------- System endpoints ----------
 @app.get("/")
 def root():
-    return {
-        "service": SERVICE_NAME,
-        "revision": REVISION,
-        "status": "running",
-        "endpoints": ["/", "/ui", "/health", "/version", "POST /chat"],
-    }
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/status")
 
 @app.get("/health")
 def health():

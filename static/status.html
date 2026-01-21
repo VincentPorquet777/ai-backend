@@ -185,6 +185,84 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Chat UI Styles */
+        .chat-messages {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+        }
+
+        .chat-message {
+            margin-bottom: 0.75rem;
+            padding: 0.75rem;
+            border-radius: 8px;
+            max-width: 85%;
+        }
+
+        .chat-message.user {
+            background: rgba(59, 130, 246, 0.2);
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .chat-message.assistant {
+            background: rgba(34, 197, 94, 0.2);
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        textarea {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #e2e8f0;
+            padding: 0.75rem;
+            font-size: 0.9rem;
+            resize: none;
+            font-family: inherit;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .recording {
+            background: #ef4444 !important;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .input-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        input[type="text"], select {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #e2e8f0;
+            padding: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        select {
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -270,10 +348,57 @@
                 </div>
             </div>
         </div>
+
+        <!-- Quick Chat Test -->
+        <div class="card">
+            <h2>Quick Chat Test</h2>
+            <div class="input-group">
+                <select id="chat-model">
+                    <option value="">Default model</option>
+                    <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                </select>
+                <input type="text" id="chat-instructions" placeholder="Optional instructions (e.g., 'be concise')" style="flex: 1;">
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-input-area">
+                <textarea id="chat-input" placeholder="Type your message... (Enter to send)" rows="3"></textarea>
+                <button id="chat-send-btn" onclick="sendChat()">Send</button>
+            </div>
+            <div class="status-item" style="margin-top: 1rem;">
+                <div class="status-label">Status</div>
+                <div class="status-indicator" id="chat-status">
+                    <span class="indicator-dot pending"></span>
+                    <span>Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Voice Test -->
+        <div class="card">
+            <h2>Voice Test</h2>
+            <div class="button-group">
+                <button id="voice-record-btn" onclick="toggleRecording()">Start Recording</button>
+                <button id="voice-send-btn" onclick="sendVoice()" disabled>Send Audio</button>
+            </div>
+            <div class="output-box" id="voice-output">Tap "Start Recording", speak, then "Stop Recording"...</div>
+            <div id="voice-transcript" class="output-box" style="margin-top: 1rem; display: none;"></div>
+            <div class="status-item" style="margin-top: 1rem;">
+                <div class="status-label">Status</div>
+                <div class="status-indicator" id="voice-status">
+                    <span class="indicator-dot pending"></span>
+                    <span>Ready</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         let selectedFile = null;
+        let chatHistory = [];
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
 
         // Run basic health checks on load
         window.onload = function() {
@@ -504,6 +629,228 @@
                 `;
             } finally {
                 btn.disabled = false;
+            }
+        }
+
+        // Chat functionality
+        function addChatMessage(role, text) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `chat-message ${role}`;
+            msgDiv.textContent = text;
+            messagesDiv.appendChild(msgDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('chat-send-btn');
+            const status = document.getElementById('chat-status');
+            const model = document.getElementById('chat-model').value || null;
+            const instructions = document.getElementById('chat-instructions').value.trim() || null;
+
+            const message = input.value.trim();
+            if (!message) return;
+
+            sendBtn.disabled = true;
+            input.disabled = true;
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Sending...</span>
+            `;
+
+            addChatMessage('user', message);
+            input.value = '';
+            chatHistory.push({ role: 'user', content: message });
+
+            // Add temporary assistant message
+            addChatMessage('assistant', '...');
+            const messagesDiv = document.getElementById('chat-messages');
+            const lastMsg = messagesDiv.lastChild;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        history: chatHistory.slice(-20),
+                        model: model,
+                        instructions: instructions
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Chat request failed');
+                }
+
+                const data = await response.json();
+                lastMsg.textContent = data.reply || '';
+                chatHistory.push({ role: 'assistant', content: data.reply || '' });
+
+                status.innerHTML = `
+                    <span class="indicator-dot success"></span>
+                    <span class="text-success">Message sent</span>
+                `;
+            } catch (error) {
+                lastMsg.textContent = `Error: ${error.message}`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            } finally {
+                sendBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
+        // Enter key to send chat
+        document.addEventListener('DOMContentLoaded', function() {
+            const chatInput = document.getElementById('chat-input');
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChat();
+                }
+            });
+        });
+
+        // Voice recording functionality
+        async function toggleRecording() {
+            const recordBtn = document.getElementById('voice-record-btn');
+            const sendBtn = document.getElementById('voice-send-btn');
+            const output = document.getElementById('voice-output');
+            const status = document.getElementById('voice-status');
+
+            if (!isRecording) {
+                // Start recording
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.textContent = 'Stop Recording';
+                    recordBtn.classList.add('recording');
+                    sendBtn.disabled = true;
+                    output.textContent = 'Recording... Click "Stop Recording" when done.';
+                    status.innerHTML = `
+                        <span class="indicator-dot error"></span>
+                        <span class="text-error">Recording</span>
+                    `;
+                } catch (error) {
+                    output.textContent = `Error: ${error.message}. Please allow microphone access.`;
+                    status.innerHTML = `
+                        <span class="indicator-dot error"></span>
+                        <span class="text-error">Failed</span>
+                    `;
+                }
+            } else {
+                // Stop recording
+                mediaRecorder.stop();
+                isRecording = false;
+                recordBtn.textContent = 'Start Recording';
+                recordBtn.classList.remove('recording');
+                sendBtn.disabled = false;
+                output.textContent = 'Recording stopped. Click "Send Audio" to transcribe and get AI response.';
+                status.innerHTML = `
+                    <span class="indicator-dot info"></span>
+                    <span>Ready to send</span>
+                `;
+            }
+        }
+
+        async function sendVoice() {
+            if (audioChunks.length === 0) {
+                alert('No audio recorded');
+                return;
+            }
+
+            const sendBtn = document.getElementById('voice-send-btn');
+            const output = document.getElementById('voice-output');
+            const transcriptDiv = document.getElementById('voice-transcript');
+            const status = document.getElementById('voice-status');
+
+            sendBtn.disabled = true;
+            output.textContent = 'Transcribing audio...';
+            transcriptDiv.style.display = 'none';
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Processing...</span>
+            `;
+
+            try {
+                // Create audio blob
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+                // Send to Whisper
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.webm');
+
+                const whisperResponse = await fetch('/test/whisper', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!whisperResponse.ok) {
+                    const error = await whisperResponse.json();
+                    throw new Error(error.detail || 'Transcription failed');
+                }
+
+                const whisperData = await whisperResponse.json();
+                const transcript = whisperData.transcript;
+
+                output.textContent = `Transcript: "${transcript}"\n\nGetting AI response...`;
+                transcriptDiv.style.display = 'block';
+                transcriptDiv.textContent = 'AI: ...';
+
+                // Send transcript to chat endpoint
+                const chatResponse = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: transcript,
+                        history: [],
+                        model: null,
+                        instructions: null
+                    })
+                });
+
+                if (!chatResponse.ok) {
+                    const error = await chatResponse.json();
+                    throw new Error(error.detail || 'Chat request failed');
+                }
+
+                const chatData = await chatResponse.json();
+                output.textContent = `Transcript: "${transcript}"`;
+                transcriptDiv.textContent = `AI Response: ${chatData.reply}`;
+
+                status.innerHTML = `
+                    <span class="indicator-dot success"></span>
+                    <span class="text-success">Complete</span>
+                `;
+
+                // Clear audio chunks for next recording
+                audioChunks = [];
+            } catch (error) {
+                output.textContent = `Error: ${error.message}`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            } finally {
+                sendBtn.disabled = true; // Keep disabled until next recording
             }
         }
     </script>
