@@ -420,25 +420,33 @@
 
         .debug-log {
             margin-bottom: 0.5rem;
-            padding: 0.25rem 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0.5rem;
+            border-radius: 4px;
+            border-left: 3px solid rgba(255, 255, 255, 0.2);
+            background: rgba(0, 0, 0, 0.3);
+            color: #e2e8f0;
+            line-height: 1.4;
         }
 
         .debug-log.error {
-            color: #ef4444;
+            border-left-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
         }
 
         .debug-log.success {
-            color: #22c55e;
+            border-left-color: #22c55e;
+            background: rgba(34, 197, 94, 0.1);
         }
 
         .debug-log.info {
-            color: #3b82f6;
+            border-left-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
         }
 
         .debug-timestamp {
             color: #94a3b8;
             margin-right: 0.5rem;
+            font-weight: 600;
         }
     </style>
 </head>
