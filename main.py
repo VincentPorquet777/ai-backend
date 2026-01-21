@@ -220,17 +220,52 @@ async def chat_stream(req: ChatRequest):
 
     async def generate():
         try:
+            print(f"[STREAM] Starting stream for model: {model}")
             response = client.responses.create(
                 model=model,
                 input=input_items,
                 stream=True,
                 tools=[{"type": "web_search_preview"}],  # Enable web search
             )
+
+            chunk_count = 0
             for chunk in response:
-                if hasattr(chunk, 'output_text_delta') and chunk.output_text_delta:
-                    yield f"data: {json.dumps({'text': chunk.output_text_delta})}\n\n"
+                chunk_count += 1
+                print(f"[STREAM] Chunk {chunk_count}: {chunk}")
+                print(f"[STREAM] Chunk type: {type(chunk)}")
+                print(f"[STREAM] Chunk dir: {dir(chunk)}")
+
+                # Try multiple possible attribute names
+                text_delta = None
+                if hasattr(chunk, 'output_text_delta'):
+                    text_delta = chunk.output_text_delta
+                    print(f"[STREAM] Found output_text_delta: {text_delta}")
+                elif hasattr(chunk, 'delta'):
+                    if hasattr(chunk.delta, 'content'):
+                        text_delta = chunk.delta.content
+                        print(f"[STREAM] Found delta.content: {text_delta}")
+                    elif hasattr(chunk.delta, 'text'):
+                        text_delta = chunk.delta.text
+                        print(f"[STREAM] Found delta.text: {text_delta}")
+                elif hasattr(chunk, 'content'):
+                    text_delta = chunk.content
+                    print(f"[STREAM] Found content: {text_delta}")
+                elif hasattr(chunk, 'text'):
+                    text_delta = chunk.text
+                    print(f"[STREAM] Found text: {text_delta}")
+
+                if text_delta:
+                    print(f"[STREAM] Yielding text: {text_delta}")
+                    yield f"data: {json.dumps({'text': text_delta})}\n\n"
+                else:
+                    print(f"[STREAM] No text found in chunk")
+
+            print(f"[STREAM] Stream complete. Total chunks: {chunk_count}")
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
+            print(f"[STREAM] Error: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
