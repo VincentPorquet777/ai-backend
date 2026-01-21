@@ -381,6 +381,65 @@
             0%, 100% { border-color: #22c55e; }
             50% { border-color: #4ade80; }
         }
+
+        /* Debug Console */
+        .debug-console {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.95);
+            border-top: 2px solid #3b82f6;
+            max-height: 300px;
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .debug-console.collapsed {
+            transform: translateY(calc(100% - 40px));
+        }
+
+        .debug-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            background: rgba(59, 130, 246, 0.2);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .debug-content {
+            padding: 1rem;
+            max-height: 260px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+        }
+
+        .debug-log {
+            margin-bottom: 0.5rem;
+            padding: 0.25rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .debug-log.error {
+            color: #ef4444;
+        }
+
+        .debug-log.success {
+            color: #22c55e;
+        }
+
+        .debug-log.info {
+            color: #3b82f6;
+        }
+
+        .debug-timestamp {
+            color: #94a3b8;
+            margin-right: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -547,6 +606,21 @@
         </div> <!-- End diagnostics-tab -->
     </div>
 
+    <!-- Debug Console (Product Mode only) -->
+    <div id="debug-console" class="debug-console collapsed">
+        <div class="debug-header" onclick="toggleDebugConsole()">
+            <div>
+                <strong>🐛 Debug Console</strong>
+                <span style="margin-left: 1rem; color: #94a3b8; font-size: 0.85rem;">(Click to expand/collapse)</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button onclick="copyDebugLogs(event)" style="padding: 0.3rem 0.8rem; font-size: 0.8rem;">📋 Copy Logs</button>
+                <button onclick="clearDebugLogs(event)" style="padding: 0.3rem 0.8rem; font-size: 0.8rem;">🗑️ Clear</button>
+            </div>
+        </div>
+        <div class="debug-content" id="debug-content"></div>
+    </div>
+
     <script>
         let selectedFile = null;
         let chatHistory = [];
@@ -562,8 +636,51 @@
         let speechSynthesis = window.speechSynthesis;
         let currentUtterance = null;
 
+        // Debug console
+        let debugLogs = [];
+
+        function debugLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const log = { timestamp, message, type };
+            debugLogs.push(log);
+
+            const debugContent = document.getElementById('debug-content');
+            const logDiv = document.createElement('div');
+            logDiv.className = `debug-log ${type}`;
+            logDiv.innerHTML = `<span class="debug-timestamp">[${timestamp}]</span>${message}`;
+            debugContent.appendChild(logDiv);
+            debugContent.scrollTop = debugContent.scrollHeight;
+
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        function toggleDebugConsole() {
+            const console = document.getElementById('debug-console');
+            console.classList.toggle('collapsed');
+        }
+
+        function copyDebugLogs(event) {
+            event.stopPropagation();
+            const logs = debugLogs.map(log => `[${log.timestamp}] [${log.type.toUpperCase()}] ${log.message}`).join('\n');
+            navigator.clipboard.writeText(logs).then(() => {
+                alert('Debug logs copied to clipboard!');
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+
+        function clearDebugLogs(event) {
+            event.stopPropagation();
+            debugLogs = [];
+            document.getElementById('debug-content').innerHTML = '';
+            debugLog('Debug logs cleared', 'info');
+        }
+
         // Run all diagnostics tests on load (except mic recording)
         window.onload = function() {
+            debugLog('🚀 Page loaded - Product Mode active', 'success');
+            debugLog('💡 Click header to expand/collapse console', 'info');
+
             // Auto-run all tests when switching to diagnostics or on initial load
             testHealth();
             testReady();
@@ -1092,6 +1209,15 @@
                 content.classList.remove('active');
             });
             document.getElementById(tabName + '-tab').classList.add('active');
+
+            // Show/hide debug console based on tab
+            const debugConsole = document.getElementById('debug-console');
+            if (tabName === 'product') {
+                debugConsole.style.display = 'block';
+                debugLog('🔄 Switched to Product Mode', 'info');
+            } else {
+                debugConsole.style.display = 'none';
+            }
         }
 
         // Product Mode: Add message to chat
@@ -1267,6 +1393,8 @@
             const message = transcript || input.value.trim();
             if (!message) return;
 
+            debugLog(`📤 Sending message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`, 'info');
+
             // Stop any ongoing speech
             stopTTS();
 
@@ -1288,8 +1416,11 @@
             let fullText = '';
             ttsTextBuffer = '';
             isTTSSpeaking = false;
+            let chunkCount = 0;
 
             try {
+                debugLog('🔄 Fetching /chat/stream...', 'info');
+
                 const response = await fetch('/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1301,51 +1432,73 @@
                     })
                 });
 
+                debugLog(`✅ Response status: ${response.status} ${response.statusText}`, response.ok ? 'success' : 'error');
+
                 if (!response.ok) {
-                    throw new Error('Chat request failed');
+                    const errorText = await response.text();
+                    debugLog(`❌ Response body: ${errorText}`, 'error');
+                    throw new Error(`Chat request failed: ${response.status}`);
                 }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
+                debugLog('📖 Starting to read stream...', 'info');
+
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        debugLog('✅ Stream completed', 'success');
+                        break;
+                    }
 
                     const text = decoder.decode(value);
+                    debugLog(`📦 Raw chunk: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`, 'info');
+
                     const lines = text.split('\n');
 
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                debugLog(`📊 Parsed data: ${JSON.stringify(data)}`, 'info');
 
-                            if (data.error) {
-                                throw new Error(data.error);
-                            }
+                                if (data.error) {
+                                    debugLog(`❌ Error in stream: ${data.error}`, 'error');
+                                    throw new Error(data.error);
+                                }
 
-                            if (data.text) {
-                                fullText += data.text;
-                                assistantMsg.textContent = fullText;
+                                if (data.text) {
+                                    chunkCount++;
+                                    fullText += data.text;
+                                    assistantMsg.textContent = fullText;
+                                    debugLog(`💬 Chunk ${chunkCount}: "${data.text}" (Total length: ${fullText.length})`, 'success');
 
-                                // Start progressive TTS
-                                speakTextProgressive(data.text, assistantMsg, false);
+                                    // Start progressive TTS
+                                    speakTextProgressive(data.text, assistantMsg, false);
 
-                                // Scroll to bottom
-                                const messagesDiv = document.getElementById('product-messages');
-                                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                            }
+                                    // Scroll to bottom
+                                    const messagesDiv = document.getElementById('product-messages');
+                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                }
 
-                            if (data.done) {
-                                // Finalize TTS with complete flag
-                                speakTextProgressive('', assistantMsg, true);
-                                updateProductStatus('');
-                                productChatHistory.push({ role: 'assistant', content: fullText });
+                                if (data.done) {
+                                    debugLog(`✅ Stream done. Total chunks: ${chunkCount}, Total length: ${fullText.length}`, 'success');
+                                    // Finalize TTS with complete flag
+                                    speakTextProgressive('', assistantMsg, true);
+                                    updateProductStatus('');
+                                    productChatHistory.push({ role: 'assistant', content: fullText });
+                                }
+                            } catch (parseError) {
+                                debugLog(`❌ JSON parse error: ${parseError.message} | Line: ${line}`, 'error');
                             }
                         }
                     }
                 }
 
             } catch (error) {
+                debugLog(`❌ Error: ${error.message}`, 'error');
+                debugLog(`❌ Error stack: ${error.stack}`, 'error');
                 assistantMsg.textContent = `Error: ${error.message}`;
                 stopTTS();
             } finally {
@@ -1353,6 +1506,7 @@
                 voiceBtn.disabled = false;
                 input.disabled = false;
                 input.focus();
+                debugLog('🏁 Message sending complete', 'info');
             }
         }
 
@@ -1407,33 +1561,41 @@
             const sendBtn = document.getElementById('product-send-btn');
 
             try {
+                debugLog('🎤 Processing voice recording...', 'info');
                 voiceBtn.disabled = true;
                 sendBtn.disabled = true;
 
                 // Create audio blob
                 const audioBlob = new Blob(productAudioChunks, { type: 'audio/webm' });
+                debugLog(`🎵 Audio blob size: ${audioBlob.size} bytes`, 'info');
 
                 // Transcribe
                 const formData = new FormData();
                 formData.append('audio', audioBlob, 'recording.webm');
 
+                debugLog('🔄 Sending to /test/whisper...', 'info');
                 const whisperResponse = await fetch('/test/whisper', {
                     method: 'POST',
                     body: formData
                 });
 
+                debugLog(`✅ Whisper response: ${whisperResponse.status}`, whisperResponse.ok ? 'success' : 'error');
+
                 if (!whisperResponse.ok) {
                     const error = await whisperResponse.json();
+                    debugLog(`❌ Whisper error: ${JSON.stringify(error)}`, 'error');
                     throw new Error(error.detail || 'Transcription failed');
                 }
 
                 const whisperData = await whisperResponse.json();
                 const transcript = whisperData.transcript;
+                debugLog(`📝 Transcript: "${transcript}"`, 'success');
 
                 // Send as chat message
                 await sendProductMessage(true, transcript);
 
             } catch (error) {
+                debugLog(`❌ Voice processing error: ${error.message}`, 'error');
                 addProductMessage('assistant', `Voice error: ${error.message}`);
             } finally {
                 voiceBtn.disabled = false;
