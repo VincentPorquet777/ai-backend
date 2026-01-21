@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>AI Backend Chat</title>
+  <style>
+    :root { --bg:#0b1020; --card:#101a33; --text:#e8eeff; --muted:#9fb1ff; --line:#1f2b55; --accent:#7aa2ff; }
+    * { box-sizing:border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    body { margin:0; background:var(--bg); color:var(--text); }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .top { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .brand { font-weight:700; letter-spacing:.3px; }
+    .pill { border:1px solid var(--line); padding:6px 10px; border-radius:999px; color:var(--muted); font-size:12px; }
+    .card { margin-top:12px; background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+    .msgs { height: 62vh; min-height: 420px; overflow:auto; padding: 14px; display:flex; flex-direction:column; gap:10px; }
+    .msg { max-width: 85%; padding: 10px 12px; border-radius: 14px; border:1px solid var(--line); line-height:1.35; white-space:pre-wrap; }
+    .u { align-self:flex-end; background:#0f2348; border-color:#223a74; }
+    .a { align-self:flex-start; background:#0f1430; }
+    .meta { font-size:12px; color:var(--muted); margin-top:2px; }
+    .bar { display:flex; gap:10px; padding: 12px; border-top:1px solid var(--line); }
+    textarea { flex:1; resize:none; height: 54px; border-radius:12px; border:1px solid var(--line); background:#0b1533; color:var(--text); padding:10px 12px; outline:none; }
+    button { width: 110px; border-radius:12px; border:1px solid var(--line); background: var(--accent); color:#071027; font-weight:700; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .row { display:flex; gap:10px; align-items:center; }
+    select, input { border-radius:10px; border:1px solid var(--line); background:#0b1533; color:var(--text); padding:8px 10px; }
+    @media (max-width:560px){ button{width:92px;} .msgs{height:60vh;} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="row">
+        <div class="brand">Your AI (MVP)</div>
+        <div class="pill" id="status">connecting…</div>
+      </div>
+      <div class="row">
+        <select id="model">
+          <option value="">default model</option>
+          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+          <option value="gpt-4.1">gpt-4.1</option>
+        </select>
+        <input id="instr" placeholder="(optional) instructions e.g. be concise" style="width:260px"/>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="msgs" id="msgs"></div>
+      <div class="bar">
+        <textarea id="box" placeholder="Type… (Enter to send, Shift+Enter for new line)"></textarea>
+        <button id="send">Send</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const msgsEl = document.getElementById('msgs');
+  const box = document.getElementById('box');
+  const sendBtn = document.getElementById('send');
+  const statusEl = document.getElementById('status');
+  const modelEl = document.getElementById('model');
+  const instrEl = document.getElementById('instr');
+
+  let history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+
+  function add(role, text){
+    const div = document.createElement('div');
+    div.className = 'msg ' + (role === 'user' ? 'u' : 'a');
+    div.textContent = text;
+    msgsEl.appendChild(div);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function save(){
+    localStorage.setItem('chat_history', JSON.stringify(history.slice(-30)));
+  }
+
+  async function ping(){
+    try{
+      const r = await fetch('/health');
+      statusEl.textContent = r.ok ? 'online' : 'offline';
+    }catch(e){
+      statusEl.textContent = 'offline';
+    }
+  }
+
+  function render(){
+    msgsEl.innerHTML = '';
+    history.forEach(m => add(m.role, m.content));
+  }
+
+  async function send(){
+    const text = box.value.trim();
+    if(!text) return;
+
+    sendBtn.disabled = true;
+    box.disabled = true;
+
+    history.push({role:'user', content:text});
+    add('user', text);
+    box.value = '';
+    save();
+
+    add('assistant', '…');
+    const lastBubble = msgsEl.lastChild;
+
+    try{
+      const payload = {
+        message: text,
+        history: history.slice(-20),
+        model: modelEl.value || null,
+        instructions: instrEl.value.trim() || null
+      };
+
+      const r = await fetch('/chat', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+
+      const data = await r.json();
+      if(!r.ok) throw new Error(data.detail || 'Request failed');
+
+      // replace "…" bubble
+      lastBubble.textContent = data.reply || '';
+      history.push({role:'assistant', content: data.reply || ''});
+      save();
+    }catch(e){
+      lastBubble.textContent = 'Error: ' + e.message;
+    }finally{
+      sendBtn.disabled = false;
+      box.disabled = false;
+      box.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', send);
+  box.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      send();
+    }
+  });
+
+  render();
+  ping();
+  setInterval(ping, 5000);
+</script>
+</body>
+</html>

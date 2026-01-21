@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend Status Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: #e2e8f0;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: #f1f5f9;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 1.5rem;
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: #f1f5f9;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-label {
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .indicator-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .success { background-color: #22c55e; }
+        .error { background-color: #ef4444; }
+        .pending { background-color: #f59e0b; }
+        .info { background-color: #3b82f6; }
+
+        .text-success { color: #22c55e; }
+        .text-error { color: #ef4444; }
+        .text-pending { color: #f59e0b; }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
+        .output-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            color: #cbd5e1;
+            min-height: 60px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .details {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 0.25rem;
+        }
+
+        .file-input {
+            margin-top: 1rem;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .file-label {
+            display: inline-block;
+            padding: 0.6rem 1.2rem;
+            background: #3b82f6;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .file-label:hover {
+            background: #2563eb;
+        }
+
+        .file-name {
+            margin-left: 1rem;
+            color: #94a3b8;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #f59e0b;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Backend Status Dashboard</h1>
+            <div class="header-info">
+                <span id="service-name">Service: Loading...</span>
+                <span id="revision">Revision: Loading...</span>
+                <span id="timestamp">Time: Loading...</span>
+            </div>
+        </div>
+
+        <!-- Basic Health -->
+        <div class="card">
+            <h2>Basic Health</h2>
+            <div class="status-item">
+                <div class="status-label">/health endpoint</div>
+                <div class="status-indicator" id="health-status">
+                    <span class="loading"></span>
+                    <span>Checking...</span>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">/ready endpoint</div>
+                <div class="status-indicator" id="ready-status">
+                    <span class="loading"></span>
+                    <span>Checking...</span>
+                </div>
+            </div>
+            <div id="ready-details" class="details"></div>
+        </div>
+
+        <!-- Streaming Test -->
+        <div class="card">
+            <h2>Streaming Test</h2>
+            <div class="button-group">
+                <button id="test-stream-btn" onclick="testStreaming()">Test Streaming</button>
+            </div>
+            <div class="output-box" id="stream-output">Click "Test Streaming" to begin...</div>
+            <div class="status-item" style="margin-top: 1rem;">
+                <div class="status-label">Status</div>
+                <div class="status-indicator" id="stream-status">
+                    <span class="indicator-dot pending"></span>
+                    <span>Not tested</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- OpenAI Test -->
+        <div class="card">
+            <h2>OpenAI Test</h2>
+            <div class="button-group">
+                <button id="test-openai-btn" onclick="testOpenAI()">Test OpenAI</button>
+            </div>
+            <div class="output-box" id="openai-output">Click "Test OpenAI" to begin...</div>
+            <div class="status-item" style="margin-top: 1rem;">
+                <div class="status-label">Status</div>
+                <div class="status-indicator" id="openai-status">
+                    <span class="indicator-dot pending"></span>
+                    <span>Not tested</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Whisper Test -->
+        <div class="card">
+            <h2>Whisper Test</h2>
+            <div class="file-input">
+                <input type="file" id="audio-file" accept="audio/*" onchange="handleFileSelect(event)">
+                <label for="audio-file" class="file-label">Choose Audio File</label>
+                <span class="file-name" id="file-name"></span>
+            </div>
+            <div class="button-group" style="margin-top: 1rem;">
+                <button id="test-whisper-btn" onclick="testWhisper()" disabled>Test Whisper</button>
+            </div>
+            <div class="output-box" id="whisper-output">Select an audio file and click "Test Whisper"...</div>
+            <div class="status-item" style="margin-top: 1rem;">
+                <div class="status-label">Status</div>
+                <div class="status-indicator" id="whisper-status">
+                    <span class="indicator-dot pending"></span>
+                    <span>Not tested</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+
+        // Run basic health checks on load
+        window.onload = function() {
+            testHealth();
+            testReady();
+        };
+
+        async function testHealth() {
+            const statusEl = document.getElementById('health-status');
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+
+                if (data.status === 'ok') {
+                    statusEl.innerHTML = `
+                        <span class="indicator-dot success"></span>
+                        <span class="text-success">OK</span>
+                    `;
+
+                    // Update header
+                    document.getElementById('service-name').textContent = `Service: ${data.service}`;
+                    document.getElementById('revision').textContent = `Revision: ${data.revision}`;
+                    document.getElementById('timestamp').textContent = `Time: ${new Date(data.timestamp).toLocaleString()}`;
+                } else {
+                    throw new Error('Health check failed');
+                }
+            } catch (error) {
+                statusEl.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            }
+        }
+
+        async function testReady() {
+            const statusEl = document.getElementById('ready-status');
+            const detailsEl = document.getElementById('ready-details');
+            try {
+                const response = await fetch('/ready');
+                const data = await response.json();
+
+                if (data.ready) {
+                    statusEl.innerHTML = `
+                        <span class="indicator-dot success"></span>
+                        <span class="text-success">Ready</span>
+                    `;
+                    detailsEl.textContent = 'All checks passed';
+                } else {
+                    statusEl.innerHTML = `
+                        <span class="indicator-dot error"></span>
+                        <span class="text-error">Not Ready</span>
+                    `;
+                    const failedChecks = Object.entries(data.checks)
+                        .filter(([_, value]) => !value)
+                        .map(([key]) => key)
+                        .join(', ');
+                    detailsEl.textContent = `Failed checks: ${failedChecks}`;
+                }
+            } catch (error) {
+                statusEl.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+                detailsEl.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function testStreaming() {
+            const btn = document.getElementById('test-stream-btn');
+            const output = document.getElementById('stream-output');
+            const status = document.getElementById('stream-status');
+
+            btn.disabled = true;
+            output.textContent = 'Starting streaming test...\n';
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Testing...</span>
+            `;
+
+            try {
+                const response = await fetch('/test/stream');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let chunks = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.chunk) {
+                                chunks.push(data.text);
+                                output.textContent = `Received: ${chunks.join(', ')}\n`;
+                            }
+                            if (data.done) {
+                                output.textContent += '\nStreaming test completed successfully!';
+                                status.innerHTML = `
+                                    <span class="indicator-dot success"></span>
+                                    <span class="text-success">Streaming OK</span>
+                                `;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                output.textContent = `Error: ${error.message}`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function testOpenAI() {
+            const btn = document.getElementById('test-openai-btn');
+            const output = document.getElementById('openai-output');
+            const status = document.getElementById('openai-status');
+
+            btn.disabled = true;
+            output.textContent = 'Starting OpenAI test (prompt: "Count to 3")...\n';
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Testing...</span>
+            `;
+
+            try {
+                const response = await fetch('/test/openai');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.error) {
+                                throw new Error(data.error);
+                            }
+                            if (data.text) {
+                                fullText += data.text;
+                                output.textContent = `Response: ${fullText}`;
+                            }
+                            if (data.done) {
+                                output.textContent += '\n\nOpenAI test completed successfully!';
+                                status.innerHTML = `
+                                    <span class="indicator-dot success"></span>
+                                    <span class="text-success">OpenAI OK</span>
+                                `;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                output.textContent = `Error: ${error.message}`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                document.getElementById('file-name').textContent = file.name;
+                document.getElementById('test-whisper-btn').disabled = false;
+            }
+        }
+
+        async function testWhisper() {
+            if (!selectedFile) {
+                alert('Please select an audio file first');
+                return;
+            }
+
+            const btn = document.getElementById('test-whisper-btn');
+            const output = document.getElementById('whisper-output');
+            const status = document.getElementById('whisper-status');
+
+            btn.disabled = true;
+            output.textContent = `Transcribing ${selectedFile.name}...\n`;
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Testing...</span>
+            `;
+
+            try {
+                const formData = new FormData();
+                formData.append('audio', selectedFile);
+
+                const response = await fetch('/test/whisper', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Whisper test failed');
+                }
+
+                const data = await response.json();
+                output.textContent = `Transcript: "${data.transcript}"\n\nWhisper test completed successfully!`;
+                status.innerHTML = `
+                    <span class="indicator-dot success"></span>
+                    <span class="text-success">Whisper OK</span>
+                `;
+            } catch (error) {
+                output.textContent = `Error: ${error.message}`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Failed</span>
+                `;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
