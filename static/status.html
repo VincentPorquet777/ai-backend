@@ -328,21 +328,75 @@
         .product-message {
             margin-bottom: 1rem;
             padding: 1rem;
+            padding-top: 2.5rem; /* Space for play button */
             border-radius: 12px;
             line-height: 1.5;
             white-space: pre-wrap;
+            position: relative;
         }
 
         .product-message.user {
             background: rgba(59, 130, 246, 0.2);
             margin-left: 15%;
             border: 1px solid rgba(59, 130, 246, 0.3);
+            padding-top: 1rem; /* User messages don't need play button space */
         }
 
         .product-message.assistant {
             background: rgba(34, 197, 94, 0.2);
             margin-right: 15%;
             border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .play-control {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(34, 197, 94, 0.3);
+            border: 2px solid rgba(34, 197, 94, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .play-control:hover {
+            background: rgba(34, 197, 94, 0.5);
+            border-color: #22c55e;
+            transform: scale(1.1);
+        }
+
+        .play-control.playing {
+            background: #ef4444;
+            border-color: #dc2626;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .capabilities-indicator {
+            display: inline-flex;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            color: #94a3b8;
+            margin-bottom: 0.5rem;
+        }
+
+        .capability-badge {
+            padding: 0.25rem 0.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .capability-badge.enabled {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.3);
+            color: #22c55e;
         }
 
         .product-input-area {
@@ -448,6 +502,7 @@
             margin-right: 0.5rem;
             font-weight: 600;
         }
+
     </style>
 </head>
 <body>
@@ -473,14 +528,16 @@
                 <div class="product-chat-area">
                     <div class="product-messages" id="product-messages"></div>
 
-                    <!-- Status & Controls Bar -->
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem; align-items: center; min-height: 36px;">
-                        <div id="product-status" style="flex: 1; font-size: 0.85rem; color: #94a3b8;"></div>
-                        <div id="tts-controls" style="display: none; gap: 0.5rem;">
-                            <button onclick="pauseTTS()" id="pause-tts-btn" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;">⏸ Pause</button>
-                            <button onclick="resumeTTS()" id="resume-tts-btn" style="padding: 0.4rem 0.8rem; font-size: 0.85rem; display: none;">▶ Resume</button>
-                            <button onclick="stopTTS()" style="padding: 0.4rem 0.8rem; font-size: 0.85rem; background: #ef4444;">⏹ Stop</button>
+                    <!-- Capabilities Indicator -->
+                    <div class="capabilities-indicator">
+                        <div class="capability-badge" id="search-capability">
+                            <span>🔍 Search: Off</span>
                         </div>
+                    </div>
+
+                    <!-- Status Bar -->
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem; align-items: center; min-height: 24px;">
+                        <div id="product-status" style="flex: 1; font-size: 0.85rem; color: #94a3b8;"></div>
                     </div>
 
                     <div class="product-input-area">
@@ -1239,157 +1296,141 @@
             return msgDiv;
         }
 
-        // Product Mode: Stop speaking
-        function stopSpeaking() {
-            if (speechSynthesis.speaking) {
-                speechSynthesis.cancel();
-            }
-            document.querySelectorAll('.speaking').forEach(el => {
-                el.classList.remove('speaking');
-            });
-        }
+        // ========== AudioManager: Singleton TTS Service ==========
+        const AudioManager = {
+            activeMessageId: null,
+            currentUtterance: null,
+            audioCache: new Map(), // messageId -> { text, timestamp }
+            CACHE_TTL: 180000, // 3 minutes
 
-        // Product Mode: Speak text aloud
-        function speakText(text, messageElement) {
-            stopSpeaking(); // Stop any previous speech
+            status: 'idle', // 'idle' | 'loading' | 'playing'
 
-            if (!text) return;
+            play(messageId, text, buttonElement) {
+                debugLog(`🎵 AudioManager.play(${messageId})`, 'info');
 
-            currentUtterance = new SpeechSynthesisUtterance(text);
-            currentUtterance.rate = 1.1;
-            currentUtterance.pitch = 1.0;
-
-            // Add speaking indicator
-            if (messageElement) {
-                messageElement.classList.add('speaking');
-            }
-
-            currentUtterance.onend = () => {
-                if (messageElement) {
-                    messageElement.classList.remove('speaking');
+                // If same message is playing, stop it
+                if (this.activeMessageId === messageId && this.status === 'playing') {
+                    this.stop();
+                    return;
                 }
-            };
 
-            currentUtterance.onerror = () => {
-                if (messageElement) {
-                    messageElement.classList.remove('speaking');
+                // Stop any currently playing message
+                if (this.activeMessageId !== null) {
+                    this.stop();
                 }
-            };
 
-            speechSynthesis.speak(currentUtterance);
-        }
+                // Set active
+                this.activeMessageId = messageId;
+                this.status = 'playing';
 
-        // Product Mode: TTS state
-        let isTTSSpeaking = false;
-        let ttsTextBuffer = '';
-        let ttsTimeout = null;
+                // Update UI
+                this.updateAllButtons();
+
+                // Use Web Speech API
+                this.currentUtterance = new SpeechSynthesisUtterance(text);
+                this.currentUtterance.rate = 1.1;
+                this.currentUtterance.pitch = 1.0;
+
+                this.currentUtterance.onend = () => {
+                    debugLog('✅ AudioManager: playback ended', 'success');
+                    this.status = 'idle';
+                    this.activeMessageId = null;
+                    this.updateAllButtons();
+                };
+
+                this.currentUtterance.onerror = (error) => {
+                    debugLog(`❌ AudioManager: TTS error: ${error.error}`, 'error');
+                    this.status = 'idle';
+                    this.activeMessageId = null;
+                    this.updateAllButtons();
+                };
+
+                speechSynthesis.speak(this.currentUtterance);
+                debugLog(`🔊 AudioManager: started speaking message ${messageId}`, 'success');
+            },
+
+            stop() {
+                debugLog('⏹ AudioManager.stop()', 'info');
+                if (speechSynthesis.speaking) {
+                    speechSynthesis.cancel();
+                }
+                this.status = 'idle';
+                const prevMessageId = this.activeMessageId;
+                this.activeMessageId = null;
+                this.currentUtterance = null;
+                this.updateAllButtons();
+                if (prevMessageId) {
+                    debugLog(`⏹ AudioManager: stopped message ${prevMessageId}`, 'info');
+                }
+            },
+
+            updateAllButtons() {
+                // Update all play buttons to reflect current state
+                document.querySelectorAll('.play-control').forEach(btn => {
+                    const messageId = btn.dataset.messageId;
+                    if (messageId === this.activeMessageId && this.status === 'playing') {
+                        btn.textContent = '⏹';
+                        btn.classList.add('playing');
+                    } else {
+                        btn.textContent = '▶';
+                        btn.classList.remove('playing');
+                    }
+                });
+            },
+
+            clearCache() {
+                const now = Date.now();
+                for (const [messageId, data] of this.audioCache.entries()) {
+                    if (now - data.timestamp > this.CACHE_TTL) {
+                        this.audioCache.delete(messageId);
+                        debugLog(`🗑️ AudioManager: cache evicted message ${messageId}`, 'info');
+                    }
+                }
+            }
+        };
+
+        // Clean cache periodically
+        setInterval(() => AudioManager.clearCache(), 60000);
 
         // Product Mode: Update status display
         function updateProductStatus(text) {
             document.getElementById('product-status').textContent = text;
         }
 
-        // Product Mode: Show/hide TTS controls
-        function showTTSControls(show) {
-            document.getElementById('tts-controls').style.display = show ? 'flex' : 'none';
+        // Add play button to assistant bubble
+        function addPlayButton(messageElement, text) {
+            const messageId = messageElement.dataset.messageId;
+            const playBtn = document.createElement('div');
+            playBtn.className = 'play-control';
+            playBtn.dataset.messageId = messageId;
+            playBtn.textContent = '▶';
+            playBtn.title = 'Speak aloud';
+
+            playBtn.onclick = (e) => {
+                e.stopPropagation();
+                AudioManager.play(messageId, text, playBtn);
+            };
+
+            messageElement.appendChild(playBtn);
+            debugLog(`➕ Added play button to message ${messageId}`, 'info');
         }
 
-        // Product Mode: Pause TTS
-        function pauseTTS() {
-            if (speechSynthesis.speaking && !speechSynthesis.paused) {
-                speechSynthesis.pause();
-                document.getElementById('pause-tts-btn').style.display = 'none';
-                document.getElementById('resume-tts-btn').style.display = 'inline-block';
-                updateProductStatus('Speaking paused');
+        // Capabilities system
+        const capabilities = {
+            search: false, // Search is off by default
+        };
+
+        function getCapabilitiesPrompt() {
+            const enabledTools = [];
+            if (capabilities.search) {
+                enabledTools.push('web_search');
             }
-        }
 
-        // Product Mode: Resume TTS
-        function resumeTTS() {
-            if (speechSynthesis.paused) {
-                speechSynthesis.resume();
-                document.getElementById('pause-tts-btn').style.display = 'inline-block';
-                document.getElementById('resume-tts-btn').style.display = 'none';
-                updateProductStatus('Speaking...');
+            if (enabledTools.length === 0) {
+                return 'You do not have access to any external tools. You cannot browse the internet or access real-time information.';
             }
-        }
 
-        // Product Mode: Stop TTS
-        function stopTTS() {
-            if (speechSynthesis.speaking) {
-                speechSynthesis.cancel();
-            }
-            if (ttsTimeout) {
-                clearTimeout(ttsTimeout);
-                ttsTimeout = null;
-            }
-            isTTSSpeaking = false;
-            ttsTextBuffer = '';
-            showTTSControls(false);
-            updateProductStatus('');
-            document.querySelectorAll('.speaking').forEach(el => {
-                el.classList.remove('speaking');
-            });
-            document.getElementById('pause-tts-btn').style.display = 'inline-block';
-            document.getElementById('resume-tts-btn').style.display = 'none';
-        }
-
-        // Product Mode: Progressive TTS (speak text as it arrives)
-        function speakTextProgressive(text, messageElement, isComplete = false) {
-            ttsTextBuffer += text;
-
-            // Start speaking when we have enough text (30+ chars) or when complete
-            if ((ttsTextBuffer.length >= 30 || isComplete) && !isTTSSpeaking) {
-                isTTSSpeaking = true;
-
-                // Clear any pending timeout
-                if (ttsTimeout) {
-                    clearTimeout(ttsTimeout);
-                    ttsTimeout = null;
-                }
-
-                const textToSpeak = ttsTextBuffer;
-                ttsTextBuffer = '';
-
-                currentUtterance = new SpeechSynthesisUtterance(textToSpeak);
-                currentUtterance.rate = 1.1;
-                currentUtterance.pitch = 1.0;
-
-                if (messageElement) {
-                    messageElement.classList.add('speaking');
-                }
-
-                showTTSControls(true);
-                updateProductStatus('Speaking...');
-
-                currentUtterance.onend = () => {
-                    isTTSSpeaking = false;
-                    if (messageElement && isComplete) {
-                        messageElement.classList.remove('speaking');
-                        showTTSControls(false);
-                        updateProductStatus('');
-                    } else if (!isComplete) {
-                        // Continue speaking remaining buffer after short delay
-                        ttsTimeout = setTimeout(() => {
-                            if (ttsTextBuffer.length > 0) {
-                                speakTextProgressive('', messageElement, false);
-                            }
-                        }, 100);
-                    }
-                    document.getElementById('pause-tts-btn').style.display = 'inline-block';
-                    document.getElementById('resume-tts-btn').style.display = 'none';
-                };
-
-                currentUtterance.onerror = () => {
-                    isTTSSpeaking = false;
-                    if (messageElement) {
-                        messageElement.classList.remove('speaking');
-                    }
-                    showTTSControls(false);
-                };
-
-                speechSynthesis.speak(currentUtterance);
-            }
+            return `Available tools: ${enabledTools.join(', ')}.`;
         }
 
         // Product Mode: Send message with streaming
@@ -1404,7 +1445,7 @@
             debugLog(`📤 Sending message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`, 'info');
 
             // Stop any ongoing speech
-            stopTTS();
+            AudioManager.stop();
 
             sendBtn.disabled = true;
             voiceBtn.disabled = true;
@@ -1422,12 +1463,16 @@
             updateProductStatus('Streaming...');
 
             let fullText = '';
-            ttsTextBuffer = '';
-            isTTSSpeaking = false;
             let chunkCount = 0;
 
             try {
                 debugLog('🔄 Fetching /chat/stream...', 'info');
+
+                // Build system message with capabilities
+                const capabilitiesPrompt = getCapabilitiesPrompt();
+                const systemMessage = `You are a helpful AI assistant. ${capabilitiesPrompt}`;
+
+                debugLog(`📋 Capabilities: ${capabilitiesPrompt}`, 'info');
 
                 const response = await fetch('/chat/stream', {
                     method: 'POST',
@@ -1436,7 +1481,7 @@
                         message: message,
                         history: productChatHistory.slice(-20),
                         model: null,
-                        instructions: null
+                        instructions: systemMessage
                     })
                 });
 
@@ -1451,7 +1496,10 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
-                debugLog('📖 Starting to read stream...', 'info');
+                debugLog('📖 Starting to read stream (buffering until done)...', 'info');
+
+                // Show loading indicator
+                assistantMsg.textContent = '...';
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -1461,15 +1509,12 @@
                     }
 
                     const text = decoder.decode(value);
-                    debugLog(`📦 Raw chunk: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`, 'info');
-
                     const lines = text.split('\n');
 
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-                                debugLog(`📊 Parsed data: ${JSON.stringify(data)}`, 'info');
 
                                 if (data.error) {
                                     debugLog(`❌ Error in stream: ${data.error}`, 'error');
@@ -1479,21 +1524,23 @@
                                 if (data.text) {
                                     chunkCount++;
                                     fullText += data.text;
-                                    assistantMsg.textContent = fullText;
-                                    debugLog(`💬 Chunk ${chunkCount}: "${data.text}" (Total length: ${fullText.length})`, 'success');
-
-                                    // Start progressive TTS
-                                    speakTextProgressive(data.text, assistantMsg, false);
-
-                                    // Scroll to bottom
-                                    const messagesDiv = document.getElementById('product-messages');
-                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                    // Don't render yet - buffer until done
                                 }
 
                                 if (data.done) {
                                     debugLog(`✅ Stream done. Total chunks: ${chunkCount}, Total length: ${fullText.length}`, 'success');
-                                    // Finalize TTS with complete flag
-                                    speakTextProgressive('', assistantMsg, true);
+
+                                    // Render complete message all at once
+                                    assistantMsg.textContent = fullText;
+                                    assistantMsg.dataset.messageId = Date.now(); // Assign unique ID
+
+                                    // Add play button to bubble
+                                    addPlayButton(assistantMsg, fullText);
+
+                                    // Scroll to bottom
+                                    const messagesDiv = document.getElementById('product-messages');
+                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
                                     updateProductStatus('');
                                     productChatHistory.push({ role: 'assistant', content: fullText });
                                 }
@@ -1527,7 +1574,7 @@
                 // Start recording
                 try {
                     // Stop any ongoing speech first
-                    stopTTS();
+                    AudioManager.stop();
 
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     productRecorder = new MediaRecorder(stream);
@@ -1622,8 +1669,6 @@
                 }
             });
 
-            // Allow interrupting speech by clicking anywhere
-            document.getElementById('product-messages').addEventListener('click', stopSpeaking);
         });
     </script>
 </body>
