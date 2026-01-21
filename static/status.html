@@ -562,10 +562,24 @@
         let speechSynthesis = window.speechSynthesis;
         let currentUtterance = null;
 
-        // Run basic health checks on load
+        // Run all diagnostics tests on load (except mic recording)
         window.onload = function() {
+            // Auto-run all tests when switching to diagnostics or on initial load
             testHealth();
             testReady();
+
+            // Delay other tests slightly to avoid overwhelming the backend
+            setTimeout(() => {
+                testStreaming();
+            }, 500);
+
+            setTimeout(() => {
+                testOpenAI();
+            }, 1000);
+
+            setTimeout(() => {
+                testWhisperAuto();
+            }, 1500);
         };
 
         async function testHealth() {
@@ -743,6 +757,55 @@
                 selectedFile = file;
                 document.getElementById('file-name').textContent = file.name;
                 document.getElementById('test-whisper-btn').disabled = false;
+            }
+        }
+
+        // Auto-test Whisper with bundled sample audio
+        async function testWhisperAuto() {
+            const output = document.getElementById('whisper-output');
+            const status = document.getElementById('whisper-status');
+
+            output.textContent = 'Loading test audio...\n';
+            status.innerHTML = `
+                <span class="loading"></span>
+                <span class="text-pending">Testing...</span>
+            `;
+
+            try {
+                // Fetch the bundled test audio file
+                const audioResponse = await fetch('/static/test-audio.wav');
+                if (!audioResponse.ok) {
+                    throw new Error('Test audio file not found');
+                }
+
+                const audioBlob = await audioResponse.blob();
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'test-audio.wav');
+
+                output.textContent = 'Transcribing test audio...\n';
+
+                const response = await fetch('/test/whisper', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Whisper test failed');
+                }
+
+                const data = await response.json();
+                output.textContent = `Auto-test transcript: "${data.transcript}"\n\nWhisper test completed successfully!`;
+                status.innerHTML = `
+                    <span class="indicator-dot success"></span>
+                    <span class="text-success">Whisper OK</span>
+                `;
+            } catch (error) {
+                output.textContent = `Auto-test error: ${error.message}\n\nYou can still test manually with your own audio file.`;
+                status.innerHTML = `
+                    <span class="indicator-dot error"></span>
+                    <span class="text-error">Auto-test failed</span>
+                `;
             }
         }
 

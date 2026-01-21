@@ -184,7 +184,7 @@ def chat(req: ChatRequest):
         response = client.responses.create(
             model=model,
             input=input_items,
-            tools=[{"type": "bing_search"}],  # Enable web search
+            tools=[{"type": "web_search_preview"}],  # Enable web search
         )
         reply = response.output_text or ""
         return ChatResponse(
@@ -224,7 +224,7 @@ async def chat_stream(req: ChatRequest):
                 model=model,
                 input=input_items,
                 stream=True,
-                tools=[{"type": "bing_search"}],  # Enable web search
+                tools=[{"type": "web_search_preview"}],  # Enable web search
             )
             for chunk in response:
                 if hasattr(chunk, 'output_text_delta') and chunk.output_text_delta:
