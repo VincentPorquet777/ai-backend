@@ -533,6 +533,7 @@
                         <div class="capability-badge" id="search-capability">
                             <span>🔍 Search: Off</span>
                         </div>
+                        <button onclick="toggleSearch()" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; margin-left: 0.5rem;">Toggle Search</button>
                     </div>
 
                     <!-- Status Bar -->
@@ -741,27 +742,17 @@
             debugLog('Debug logs cleared', 'info');
         }
 
-        // Run all diagnostics tests on load (except mic recording)
+        // Run basic health checks on load (streaming tests must be manually triggered)
         window.onload = function() {
             debugLog('🚀 Page loaded - Product Mode active', 'success');
             debugLog('💡 Click header to expand/collapse console', 'info');
 
-            // Auto-run all tests when switching to diagnostics or on initial load
+            // Auto-run only basic health checks
             testHealth();
             testReady();
 
-            // Delay other tests slightly to avoid overwhelming the backend
-            setTimeout(() => {
-                testStreaming();
-            }, 500);
-
-            setTimeout(() => {
-                testOpenAI();
-            }, 1000);
-
-            setTimeout(() => {
-                testWhisperAuto();
-            }, 1500);
+            // Note: Streaming, OpenAI, and Whisper tests removed from auto-run
+            // to prevent overwhelming the backend. Click test buttons to run them manually.
         };
 
         async function testHealth() {
@@ -1290,11 +1281,17 @@
             }
         }
 
+        // Generate unique message ID
+        function makeMessageId() {
+            return `m_${Date.now().toString(36)}_${Math.random().toString(16).slice(2)}`;
+        }
+
         // Product Mode: Add message to chat
         function addProductMessage(role, text) {
             const messagesDiv = document.getElementById('product-messages');
             const msgDiv = document.createElement('div');
             msgDiv.className = `product-message ${role}`;
+            msgDiv.dataset.messageId = makeMessageId(); // Assign unique ID at creation
             msgDiv.textContent = text;
             messagesDiv.appendChild(msgDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -1302,10 +1299,12 @@
         }
 
         // ========== AudioManager: Singleton TTS Service ==========
+        // Key fix: cancel() is async-ish; speaking immediately after cancel can fail on some browsers
         const AudioManager = {
             activeMessageId: null,
             currentUtterance: null,
-            audioCache: new Map(), // messageId -> { text, timestamp }
+            token: 0, // Increments on each stop to prevent race conditions
+            audioCache: new Map(),
             CACHE_TTL: 180000, // 3 minutes
 
             status: 'idle', // 'idle' | 'loading' | 'playing'
@@ -1313,9 +1312,10 @@
             play(messageId, text, buttonElement) {
                 debugLog(`🎵 AudioManager.play(${messageId})`, 'info');
 
-                // If same message is playing, stop it
-                if (this.activeMessageId === messageId && this.status === 'playing') {
+                // If same message is playing, stop it (toggle behavior)
+                if (this.activeMessageId === messageId && (this.status === 'playing' || this.status === 'loading')) {
                     this.stop();
+                    this.updateAllButtons();
                     return;
                 }
 
@@ -1324,45 +1324,75 @@
                     this.stop();
                 }
 
-                // Set active
+                // Set active and loading state
                 this.activeMessageId = messageId;
-                this.status = 'playing';
+                this.status = 'loading';
+                this.token += 1; // Increment token to invalidate any pending plays
+                const myToken = this.token;
 
-                // Update UI
+                // Update UI to show loading
                 this.updateAllButtons();
 
-                // Use Web Speech API
-                this.currentUtterance = new SpeechSynthesisUtterance(text);
-                this.currentUtterance.rate = 1.1;
-                this.currentUtterance.pitch = 1.0;
+                // CRITICAL: Wait 80ms for cancel() to fully process before speaking
+                // This prevents the race condition where speak() is called while cancel() is still processing
+                setTimeout(() => {
+                    // Check if this play was superseded by a newer one
+                    if (this.token !== myToken) {
+                        debugLog(`⚠️ AudioManager: play superseded for message ${messageId}`, 'info');
+                        return;
+                    }
 
-                this.currentUtterance.onend = () => {
-                    debugLog('✅ AudioManager: playback ended', 'success');
-                    this.status = 'idle';
-                    this.activeMessageId = null;
-                    this.updateAllButtons();
-                };
+                    try {
+                        // Use Web Speech API
+                        this.currentUtterance = new SpeechSynthesisUtterance(text);
+                        this.currentUtterance.rate = 1.1;
+                        this.currentUtterance.pitch = 1.0;
 
-                this.currentUtterance.onerror = (error) => {
-                    debugLog(`❌ AudioManager: TTS error: ${error.error}`, 'error');
-                    this.status = 'idle';
-                    this.activeMessageId = null;
-                    this.updateAllButtons();
-                };
+                        this.currentUtterance.onend = () => {
+                            debugLog('✅ AudioManager: playback ended', 'success');
+                            if (this.activeMessageId === messageId) {
+                                this.status = 'idle';
+                                this.activeMessageId = null;
+                                this.updateAllButtons();
+                            }
+                        };
 
-                speechSynthesis.speak(this.currentUtterance);
-                debugLog(`🔊 AudioManager: started speaking message ${messageId}`, 'success');
+                        this.currentUtterance.onerror = (error) => {
+                            debugLog(`❌ AudioManager: TTS error: ${error.error}`, 'error');
+                            if (this.activeMessageId === messageId) {
+                                this.status = 'idle';
+                                this.activeMessageId = null;
+                                this.updateAllButtons();
+                            }
+                        };
+
+                        speechSynthesis.speak(this.currentUtterance);
+                        this.status = 'playing';
+                        this.updateAllButtons();
+                        debugLog(`🔊 AudioManager: started speaking message ${messageId}`, 'success');
+                    } catch (error) {
+                        debugLog(`❌ AudioManager: speak error: ${error.message}`, 'error');
+                        this.status = 'idle';
+                        this.activeMessageId = null;
+                        this.updateAllButtons();
+                    }
+                }, 80); // 80ms delay to let cancel() complete
             },
 
             stop() {
                 debugLog('⏹ AudioManager.stop()', 'info');
-                if (speechSynthesis.speaking) {
-                    speechSynthesis.cancel();
+                try {
+                    if (speechSynthesis.speaking) {
+                        speechSynthesis.cancel();
+                    }
+                } catch (error) {
+                    debugLog(`⚠️ AudioManager: cancel error: ${error.message}`, 'info');
                 }
                 this.status = 'idle';
                 const prevMessageId = this.activeMessageId;
                 this.activeMessageId = null;
                 this.currentUtterance = null;
+                this.token += 1; // Increment to invalidate any pending plays
                 this.updateAllButtons();
                 if (prevMessageId) {
                     debugLog(`⏹ AudioManager: stopped message ${prevMessageId}`, 'info');
@@ -1373,7 +1403,10 @@
                 // Update all play buttons to reflect current state
                 document.querySelectorAll('.play-control').forEach(btn => {
                     const messageId = btn.dataset.messageId;
-                    if (messageId === this.activeMessageId && this.status === 'playing') {
+                    if (messageId === this.activeMessageId && this.status === 'loading') {
+                        btn.textContent = '⏳';
+                        btn.classList.remove('playing');
+                    } else if (messageId === this.activeMessageId && this.status === 'playing') {
                         btn.textContent = '⏹';
                         btn.classList.add('playing');
                     } else {
@@ -1422,20 +1455,38 @@
 
         // Capabilities system
         const capabilities = {
-            search: false, // Search is off by default
+            search: false, // Search is off by default (only enable if backend supports it)
         };
 
         function getCapabilitiesPrompt() {
-            const enabledTools = [];
+            const lines = [
+                'You are a helpful AI assistant.',
+                `Tools enabled: web_search=${capabilities.search ? 'true' : 'false'}, voice_input=true, speak_aloud=true.`
+            ];
+
+            if (!capabilities.search) {
+                lines.push('If web_search=false and the user asks you to browse or search, clearly explain you cannot access live search from this app.');
+            }
+
+            lines.push('Keep answers concise unless the user explicitly asks for depth.');
+
+            return lines.join('\n');
+        }
+
+        function toggleSearch() {
+            capabilities.search = !capabilities.search;
+            const badge = document.getElementById('search-capability');
+            const span = badge.querySelector('span');
+
             if (capabilities.search) {
-                enabledTools.push('web_search');
+                badge.classList.add('enabled');
+                span.textContent = '🔍 Search: On';
+                debugLog('✅ Search capability enabled (only works if backend supports it)', 'success');
+            } else {
+                badge.classList.remove('enabled');
+                span.textContent = '🔍 Search: Off';
+                debugLog('⚠️ Search capability disabled', 'info');
             }
-
-            if (enabledTools.length === 0) {
-                return 'You do not have access to any external tools. You cannot browse the internet or access real-time information.';
-            }
-
-            return `Available tools: ${enabledTools.join(', ')}.`;
         }
 
         // Product Mode: Send message with streaming
@@ -1471,10 +1522,9 @@
                 debugLog('🔄 Fetching /chat (non-streaming)...', 'info');
 
                 // Build system message with capabilities
-                const capabilitiesPrompt = getCapabilitiesPrompt();
-                const systemMessage = `You are a helpful AI assistant. ${capabilitiesPrompt}`;
+                const systemMessage = getCapabilitiesPrompt();
 
-                debugLog(`📋 Capabilities: ${capabilitiesPrompt}`, 'info');
+                debugLog(`📋 Capabilities: search=${capabilities.search}`, 'info');
 
                 const response = await fetch('/chat', {
                     method: 'POST',
@@ -1500,9 +1550,8 @@
 
                 debugLog(`✅ Received reply: ${reply.length} characters`, 'success');
 
-                // Render complete message
+                // Render complete message (messageId already set at bubble creation)
                 assistantMsg.textContent = reply;
-                assistantMsg.dataset.messageId = Date.now(); // Assign unique ID
 
                 // Add play button to bubble
                 addPlayButton(assistantMsg, reply);
