@@ -184,6 +184,7 @@ def chat(req: ChatRequest):
         response = client.responses.create(
             model=model,
             input=input_items,
+            tools=[{"type": "bing_search"}],  # Enable web search
         )
         reply = response.output_text or ""
         return ChatResponse(
@@ -198,6 +199,41 @@ def chat(req: ChatRequest):
             status_code=500,
             detail=f"OpenAI call failed: {type(e).__name__}: {str(e)}"
         )
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    if client is None:
+        async def error_stream():
+            yield f"data: {json.dumps({'error': 'OpenAI client not initialized'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    model = req.model or DEFAULT_MODEL
+
+    # Build input items
+    input_items = []
+    if req.instructions:
+        input_items.append({"role": "developer", "content": req.instructions})
+    for m in req.history:
+        input_items.append({"role": m.role, "content": m.content})
+    input_items.append({"role": "user", "content": req.message})
+
+    async def generate():
+        try:
+            response = client.responses.create(
+                model=model,
+                input=input_items,
+                stream=True,
+                tools=[{"type": "bing_search"}],  # Enable web search
+            )
+            for chunk in response:
+                if hasattr(chunk, 'output_text_delta') and chunk.output_text_delta:
+                    yield f"data: {json.dumps({'text': chunk.output_text_delta})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # Optional: nicer 404
