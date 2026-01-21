@@ -19,7 +19,13 @@ PORT = int(os.getenv("PORT", "8080"))
 
 # OpenAI
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-client = OpenAI()  # reads OPENAI_API_KEY from env automatically :contentReference[oaicite:2]{index=2}
+
+# Initialize OpenAI client (will be None if API key not set)
+try:
+    client = OpenAI()  # reads OPENAI_API_KEY from env automatically
+except Exception as e:
+    print(f"Warning: OpenAI client initialization failed: {e}")
+    client = None
 
 # Static UI
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -114,6 +120,9 @@ async def test_stream():
 async def test_openai():
     async def generate():
         try:
+            if client is None:
+                yield f"data: {json.dumps({'error': 'OpenAI client not initialized. Check OPENAI_API_KEY.'})}\n\n"
+                return
             response = client.responses.create(
                 model=DEFAULT_MODEL,
                 input=[{"role": "user", "content": "Count to 3"}],
@@ -129,6 +138,8 @@ async def test_openai():
 
 @app.post("/test/whisper")
 async def test_whisper(audio: UploadFile = File(...)):
+    if client is None:
+        raise HTTPException(status_code=503, detail="OpenAI client not initialized. Check OPENAI_API_KEY.")
     try:
         # Save temp file
         temp_path = f"/tmp/{audio.filename}"
@@ -151,6 +162,12 @@ async def test_whisper(audio: UploadFile = File(...)):
 # ---------- Chat ----------
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI client not initialized. Check OPENAI_API_KEY environment variable."
+        )
+
     model = req.model or DEFAULT_MODEL
 
     # Build input items for the Responses API (roles supported) :contentReference[oaicite:3]{index=3}
