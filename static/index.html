@@ -5,26 +5,31 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>AI Backend Chat</title>
   <style>
-    :root { --bg:#0b1020; --card:#101a33; --text:#e8eeff; --muted:#9fb1ff; --line:#1f2b55; --accent:#7aa2ff; }
+    :root { --bg:#0b1020; --card:#101a33; --text:#e8eeff; --muted:#9fb1ff; --line:#1f2b55; --accent:#7aa2ff; --green:#4caf7d; --red:#e05c5c; }
     * { box-sizing:border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
     body { margin:0; background:var(--bg); color:var(--text); }
     .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
     .top { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
     .brand { font-weight:700; letter-spacing:.3px; }
     .pill { border:1px solid var(--line); padding:6px 10px; border-radius:999px; color:var(--muted); font-size:12px; }
+    .pill.green { border-color:var(--green); color:var(--green); }
     .card { margin-top:12px; background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
-    .msgs { height: 62vh; min-height: 420px; overflow:auto; padding: 14px; display:flex; flex-direction:column; gap:10px; }
+    .msgs { height: 58vh; min-height: 380px; overflow:auto; padding: 14px; display:flex; flex-direction:column; gap:10px; }
     .msg { max-width: 85%; padding: 10px 12px; border-radius: 14px; border:1px solid var(--line); line-height:1.35; white-space:pre-wrap; }
     .u { align-self:flex-end; background:#0f2348; border-color:#223a74; }
     .a { align-self:flex-start; background:#0f1430; }
-    .meta { font-size:12px; color:var(--muted); margin-top:2px; }
     .bar { display:flex; gap:10px; padding: 12px; border-top:1px solid var(--line); }
     textarea { flex:1; resize:none; height: 54px; border-radius:12px; border:1px solid var(--line); background:#0b1533; color:var(--text); padding:10px 12px; outline:none; }
-    button { width: 110px; border-radius:12px; border:1px solid var(--line); background: var(--accent); color:#071027; font-weight:700; cursor:pointer; }
+    button { padding:0 16px; height:44px; border-radius:12px; border:1px solid var(--line); background: var(--accent); color:#071027; font-weight:700; cursor:pointer; white-space:nowrap; }
+    button.ghost { background:transparent; color:var(--muted); }
+    button.danger { background:transparent; color:var(--red); border-color:var(--red); }
     button:disabled { opacity:.5; cursor:not-allowed; }
-    .row { display:flex; gap:10px; align-items:center; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     select, input { border-radius:10px; border:1px solid var(--line); background:#0b1533; color:var(--text); padding:8px 10px; }
-    @media (max-width:560px){ button{width:92px;} .msgs{height:60vh;} }
+    .session-bar { margin-top:10px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .session-id { font-family:monospace; font-size:13px; background:#0b1020; border:1px solid var(--line); padding:5px 10px; border-radius:8px; color:var(--accent); letter-spacing:.5px; }
+    .sep { color:var(--line); }
+    @media (max-width:560px){ button{padding:0 10px;} .msgs{height:55vh;} }
   </style>
 </head>
 <body>
@@ -33,6 +38,7 @@
       <div class="row">
         <div class="brand">Your AI (MVP)</div>
         <div class="pill" id="status">connecting…</div>
+        <div class="pill green" id="session-badge" style="display:none">session active</div>
       </div>
       <div class="row">
         <select id="model">
@@ -40,8 +46,20 @@
           <option value="gpt-4.1-mini">gpt-4.1-mini</option>
           <option value="gpt-4.1">gpt-4.1</option>
         </select>
-        <input id="instr" placeholder="(optional) instructions e.g. be concise" style="width:260px"/>
+        <input id="instr" placeholder="(optional) instructions e.g. be concise" style="width:220px"/>
       </div>
+    </div>
+
+    <!-- Session sync bar -->
+    <div class="session-bar">
+      <span style="font-size:12px;color:var(--muted);white-space:nowrap">Session:</span>
+      <span class="session-id" id="sid-display">none</span>
+      <button class="ghost" id="copy-btn" title="Copy session ID" style="height:32px;padding:0 10px;font-size:12px">Copy</button>
+      <button class="ghost" id="new-session-btn" style="height:32px;padding:0 10px;font-size:12px">New</button>
+      <span class="sep">|</span>
+      <input id="sid-input" placeholder="Enter session ID to sync…" style="width:180px;height:32px;font-size:12px"/>
+      <button id="load-btn" style="height:32px;padding:0 12px;font-size:12px">Load</button>
+      <button class="danger" id="clear-session-btn" style="height:32px;padding:0 10px;font-size:12px;display:none">End</button>
     </div>
 
     <div class="card">
@@ -60,10 +78,16 @@
   const statusEl = document.getElementById('status');
   const modelEl = document.getElementById('model');
   const instrEl = document.getElementById('instr');
+  const sidDisplay = document.getElementById('sid-display');
+  const sidInput = document.getElementById('sid-input');
+  const sessionBadge = document.getElementById('session-badge');
+  const clearSessionBtn = document.getElementById('clear-session-btn');
 
-  let history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+  let history = [];
+  let currentSessionId = localStorage.getItem('session_id') || null;
 
-  function add(role, text){
+  // ---- Render ----
+  function addMsg(role, text) {
     const div = document.createElement('div');
     div.className = 'msg ' + (role === 'user' ? 'u' : 'a');
     div.textContent = text;
@@ -71,78 +95,147 @@
     msgsEl.scrollTop = msgsEl.scrollHeight;
   }
 
-  function save(){
-    localStorage.setItem('chat_history', JSON.stringify(history.slice(-30)));
+  function renderHistory() {
+    msgsEl.innerHTML = '';
+    history.forEach(m => addMsg(m.role, m.content));
   }
 
-  async function ping(){
-    try{
-      const r = await fetch('/health');
-      statusEl.textContent = r.ok ? 'online' : 'offline';
-    }catch(e){
-      statusEl.textContent = 'offline';
+  function updateSessionUI() {
+    if (currentSessionId) {
+      sidDisplay.textContent = currentSessionId;
+      sessionBadge.style.display = '';
+      clearSessionBtn.style.display = '';
+    } else {
+      sidDisplay.textContent = 'none';
+      sessionBadge.style.display = 'none';
+      clearSessionBtn.style.display = 'none';
     }
   }
 
-  function render(){
-    msgsEl.innerHTML = '';
-    history.forEach(m => add(m.role, m.content));
+  // ---- Session helpers ----
+  async function loadSession(id) {
+    try {
+      const r = await fetch(`/sessions/${id}`);
+      if (!r.ok) { alert(`Session '${id}' not found on server.`); return; }
+      const s = await r.json();
+      currentSessionId = id;
+      history = s.messages || [];
+      localStorage.setItem('session_id', id);
+      updateSessionUI();
+      renderHistory();
+    } catch(e) {
+      alert('Could not load session: ' + e.message);
+    }
   }
 
-  async function send(){
+  async function createSession() {
+    try {
+      const instructions = instrEl.value.trim() || null;
+      const r = await fetch('/sessions', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ instructions })
+      });
+      const s = await r.json();
+      currentSessionId = s.id;
+      history = [];
+      localStorage.setItem('session_id', s.id);
+      updateSessionUI();
+      renderHistory();
+    } catch(e) {
+      alert('Could not create session: ' + e.message);
+    }
+  }
+
+  function endSession() {
+    currentSessionId = null;
+    history = [];
+    localStorage.removeItem('session_id');
+    updateSessionUI();
+    renderHistory();
+  }
+
+  // ---- Chat ----
+  async function send() {
     const text = box.value.trim();
-    if(!text) return;
+    if (!text) return;
 
     sendBtn.disabled = true;
     box.disabled = true;
-
-    history.push({role:'user', content:text});
-    add('user', text);
+    history.push({ role: 'user', content: text });
+    addMsg('user', text);
     box.value = '';
-    save();
 
-    add('assistant', '…');
+    addMsg('assistant', '…');
     const lastBubble = msgsEl.lastChild;
 
-    try{
-      const payload = {
-        message: text,
-        history: history.slice(-20),
-        model: modelEl.value || null,
-        instructions: instrEl.value.trim() || null
-      };
+    try {
+      const endpoint = currentSessionId ? `/sessions/${currentSessionId}/chat` : '/chat';
+      const payload = currentSessionId
+        ? { message: text, model: modelEl.value || null, instructions: instrEl.value.trim() || null }
+        : { message: text, history: history.slice(-20), model: modelEl.value || null, instructions: instrEl.value.trim() || null };
 
-      const r = await fetch('/chat', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
       const data = await r.json();
-      if(!r.ok) throw new Error(data.detail || 'Request failed');
+      if (!r.ok) throw new Error(data.detail || 'Request failed');
 
-      // replace "…" bubble
       lastBubble.textContent = data.reply || '';
-      history.push({role:'assistant', content: data.reply || ''});
-      save();
-    }catch(e){
+      history.push({ role: 'assistant', content: data.reply || '' });
+    } catch(e) {
       lastBubble.textContent = 'Error: ' + e.message;
-    }finally{
+      // roll back user message from local history
+      history.pop();
+    } finally {
       sendBtn.disabled = false;
       box.disabled = false;
       box.focus();
     }
   }
 
+  // ---- Health ----
+  async function ping() {
+    try {
+      const r = await fetch('/health');
+      statusEl.textContent = r.ok ? 'online' : 'offline';
+    } catch(e) {
+      statusEl.textContent = 'offline';
+    }
+  }
+
+  // ---- Events ----
   sendBtn.addEventListener('click', send);
   box.addEventListener('keydown', (e) => {
-    if(e.key === 'Enter' && !e.shiftKey){
-      e.preventDefault();
-      send();
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  document.getElementById('new-session-btn').addEventListener('click', createSession);
+
+  document.getElementById('copy-btn').addEventListener('click', () => {
+    if (currentSessionId) {
+      navigator.clipboard.writeText(currentSessionId).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+      });
     }
   });
 
-  render();
+  document.getElementById('load-btn').addEventListener('click', () => {
+    const id = sidInput.value.trim();
+    if (id) { sidInput.value = ''; loadSession(id); }
+  });
+
+  clearSessionBtn.addEventListener('click', endSession);
+
+  // ---- Init ----
+  updateSessionUI();
+  if (currentSessionId) {
+    loadSession(currentSessionId);
+  }
   ping();
   setInterval(ping, 5000);
 </script>
