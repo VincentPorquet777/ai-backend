@@ -1,0 +1,18 @@
+# Environment variables
+.env
+telegram-mcp/.env
+
+# Node
+node_modules/
+telegram-mcp/node_modules/
+telegram-mcp/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
