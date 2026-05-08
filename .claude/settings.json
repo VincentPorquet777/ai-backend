@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "telegram": {
-      "command": "node",
-      "args": ["/home/user/ai-backend/telegram-mcp/dist/index.js"]
+      "type": "http",
+      "url": "https://muyupcxipdbgoitkqmxr.supabase.co/functions/v1/telegram-mcp"
     }
   }
 }
